@@ -20,6 +20,40 @@ export N8N_BASE_URL="https://mapey.app.n8n.cloud"
 
 > **Sécurité** : Ajoutez ces variables dans votre `.env` local (non versionné) ou dans les secrets de votre gestionnaire de configuration.
 
+## Installation des Serveurs MCP
+
+Les serveurs MCP sont configurés dans `.claude/settings.json` (déjà présent dans ce repo). Ils démarrent automatiquement quand Claude Code ouvre ce projet.
+
+### Prérequis
+
+- **Node.js** (pour n8n-mcp via npx) : `node --version` doit retourner v18+
+- **Docker** (pour GitHub MCP) : `docker --version` doit fonctionner
+
+### 1. Configurer les variables d'environnement
+
+```bash
+cp .env.example .env
+# Éditez .env et remplissez N8N_API_KEY et GITHUB_TOKEN
+```
+
+### 2. Tester n8n-mcp
+
+```bash
+N8N_API_URL=https://mapey.app.n8n.cloud N8N_API_KEY=<votre_clé> npx n8n-mcp
+# Doit démarrer sans erreur (Ctrl+C pour quitter)
+```
+
+### 3. Tester le GitHub MCP
+
+```bash
+docker pull ghcr.io/github/github-mcp-server
+# Vérifier que l'image se télécharge correctement
+```
+
+### 4. Relancer Claude Code
+
+Fermez et rouvrez Claude Code dans ce répertoire — les serveurs MCP démarreront automatiquement.
+
 ## Outils MCP Disponibles
 
 ### Documentation & Découverte
