@@ -1,0 +1,282 @@
+{
+  "name": "GPA - Relances Automatiques",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000001",
+      "name": "Déclencheur Quotidien 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000002",
+      "name": "Excel - Lire Suivi GPA",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [450, 300],
+      "parameters": {
+        "resource": "tableRow",
+        "operation": "getAll",
+        "workbookRLC": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE",
+          "mode": "id"
+        },
+        "worksheetRLC": {
+          "__rl": true,
+          "value": "Suivi GPA",
+          "mode": "name"
+        },
+        "tableRLC": {
+          "__rl": true,
+          "value": "TableauGPA",
+          "mode": "name"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000003",
+      "name": "Code - Filtrer Réserves à Relancer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const today = new Date();\nconst result = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n\n  // Ignorer les réserves clôturées ou rejetées\n  if (!row['Statut'] || row['Statut'] !== 'en_cours') continue;\n\n  // Ignorer si pas de date de diffusion au MOEX\n  const dateDiffusion = row['Date diffusion MOA au MOEX'];\n  if (!dateDiffusion) continue;\n\n  // Calculer l'ancienneté en jours\n  const diffDate = new Date(dateDiffusion);\n  const daysDiff = Math.floor((today - diffDate) / (1000 * 60 * 60 * 24));\n\n  const baseData = {\n    id_reserve: row['N° de réserve'],\n    nom: row['Nom'],\n    lot: row['N° logement'],\n    piece: row['Localisation'],\n    description: row['Description'],\n    date_diffusion: dateDiffusion,\n    nb_jours: daysDiff,\n    urgence: row['Urgence'] === 'oui'\n  };\n\n  // Relance 1 : >= 7 jours ET relance_1 non encore envoyée\n  if (daysDiff >= 7 && !row['Date relance 1 envoyée']) {\n    result.push({\n      json: { ...baseData, action: 'relance_1' }\n    });\n  }\n\n  // Relance 2 : >= 14 jours ET relance_2 non encore envoyée\n  if (daysDiff >= 14 && !row['Date relance 2 envoyée']) {\n    result.push({\n      json: { ...baseData, action: 'relance_2' }\n    });\n  }\n}\n\n// Si aucune action nécessaire, retourner un item vide\nif (result.length === 0) {\n  return [{ json: { action: 'aucune', message: 'Aucune réserve à relancer aujourd\\'hui' } }];\n}\n\nreturn result;"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000004",
+      "name": "Switch - Type de Relance",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [850, 300],
+      "parameters": {
+        "mode": "rules",
+        "options": {},
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "relance_1",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Relance 1"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "relance_2",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Relance 2"
+            }
+          ]
+        },
+        "fallbackOutput": "none"
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000005",
+      "name": "Email - Relance 1 MOEX",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 150],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "souys2.3@connexionbatiment.fr",
+        "subject": "=[RELANCE 1] Réserve GPA n°{{ $json.id_reserve }} — Résidence ANTOINETTE — Lot {{ $json.lot }}",
+        "emailType": "text",
+        "message": "=Bonjour Clémence,\n\nSauf erreur de notre part, nous n'avons pas reçu de retour concernant la réserve GPA n°{{ $json.id_reserve }} (lot {{ $json.lot }} — {{ $json.piece }}), transmise le {{ $json.date_diffusion }}.\n\nCette réserve est en attente depuis {{ $json.nb_jours }} jours.\n\nPouvez-vous nous confirmer l'avancement de l'intervention et nous retourner la fiche complétée et signée ?\n\nCordialement,\nFayat Immobilier — Service GPA Résidence ANTOINETTE",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000006",
+      "name": "Excel - Enregistrer Relance 1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 150],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/items/REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE/workbook/worksheets/Suivi GPA/tables/TableauGPA/rows/ItemAt(index=0)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftExcelOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"values\": [[\n    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,\n    null,\n    \"{{ $now.format('dd/MM/yyyy') }}\",\n    null,\n    null\n  ]]\n}",
+        "options": {}
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      },
+      "notes": "NOTE: L'index de ligne doit être calculé dynamiquement. Voir documentation Graph API pour filtrer par N° de réserve."
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000007",
+      "name": "Email - Relance 2 MOEX",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 350],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "souys2.3@connexionbatiment.fr",
+        "subject": "=[URGENT — RELANCE 2] Réserve GPA n°{{ $json.id_reserve }} — Résidence ANTOINETTE — Lot {{ $json.lot }}",
+        "emailType": "text",
+        "message": "=Bonjour,\n\nLa réserve GPA n°{{ $json.id_reserve }} (lot {{ $json.lot }} — {{ $json.piece }}) est sans retour depuis {{ $json.nb_jours }} jours (transmise le {{ $json.date_diffusion }}).\n\nMerci de traiter ce dossier en urgence et de nous retourner la fiche complétée et signée dans les meilleurs délais.\n\nFayat Immobilier — Service GPA Résidence ANTOINETTE",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000008",
+      "name": "Email - Alerte Interne Fayat",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1100, 500],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "REMPLACER_PAR_EMAIL_RESPONSABLE_INTERNE",
+        "subject": "=[ALERTE GPA] Réserve n°{{ $json.id_reserve }} sans retour depuis {{ $json.nb_jours }} jours",
+        "emailType": "text",
+        "message": "=Bonjour,\n\nATTENTION : La réserve GPA n°{{ $json.id_reserve }} concernant le lot {{ $json.lot }} ({{ $json.piece }}) n'a toujours pas de retour du MOEX après {{ $json.nb_jours }} jours.\n\nDate de transmission initiale : {{ $json.date_diffusion }}\nDescription : {{ $json.description }}\n{{ $json.urgence === true ? 'URGENCE SÉCURITÉ : Cette réserve a été marquée comme urgente.' : '' }}\n\nMerci de relancer CONNEXION BÂTIMENT directement.\n\nService GPA Automatisé — Résidence ANTOINETTE",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+    {
+      "id": "a1b2c3d4-0001-0001-0001-000000000009",
+      "name": "Excel - Enregistrer Relance 2",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 400],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/items/REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE/workbook/worksheets/Suivi GPA/tables/TableauGPA/rows/ItemAt(index=0)",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftExcelOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"values\": [[\n    null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,\n    null,\n    null,\n    \"{{ $now.format('dd/MM/yyyy') }}\",\n    null\n  ]]\n}",
+        "options": {}
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      },
+      "notes": "NOTE: L'index de ligne doit être calculé dynamiquement. Voir documentation Graph API pour filtrer par N° de réserve."
+    }
+  ],
+  "connections": {
+    "Déclencheur Quotidien 9h": {
+      "main": [
+        [{ "node": "Excel - Lire Suivi GPA", "type": "main", "index": 0 }]
+      ]
+    },
+    "Excel - Lire Suivi GPA": {
+      "main": [
+        [{ "node": "Code - Filtrer Réserves à Relancer", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code - Filtrer Réserves à Relancer": {
+      "main": [
+        [{ "node": "Switch - Type de Relance", "type": "main", "index": 0 }]
+      ]
+    },
+    "Switch - Type de Relance": {
+      "main": [
+        [{ "node": "Email - Relance 1 MOEX", "type": "main", "index": 0 }],
+        [
+          { "node": "Email - Relance 2 MOEX", "type": "main", "index": 0 },
+          { "node": "Email - Alerte Interne Fayat", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Email - Relance 1 MOEX": {
+      "main": [
+        [{ "node": "Excel - Enregistrer Relance 1", "type": "main", "index": 0 }]
+      ]
+    },
+    "Email - Relance 2 MOEX": {
+      "main": [
+        [{ "node": "Excel - Enregistrer Relance 2", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REMPLACER_PAR_ID_INSTANCE_N8N"
+  },
+  "tags": ["GPA", "Fayat Immobilier", "ANTOINETTE", "Relances"]
+}

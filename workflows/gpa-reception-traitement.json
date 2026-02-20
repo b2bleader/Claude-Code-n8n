@@ -1,0 +1,751 @@
+{
+  "name": "GPA - Réception & Traitement Email",
+  "nodes": [
+    {
+      "id": "wf1-node-0001",
+      "name": "IMAP - Surveiller Boîte GPA",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [250, 400],
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "options": {
+          "allowUnauthorizedCerts": false,
+          "downloadAttachments": true,
+          "attachmentsPrefix": "pj_",
+          "format": "resolved"
+        }
+      },
+      "credentials": {
+        "imap": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_IMAP",
+          "name": "IMAP Fayat GPA"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-0002",
+      "name": "Code - Pré-classifier Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 400],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const email = $input.item.json;\n\nconst from = (email.from || '').toLowerCase();\nconst subject = (email.subject || '').toLowerCase();\nconst hasAttachment = email.attachments && email.attachments.length > 0;\nconst bodyText = email.text || email.html || '';\n\n// Classifier le type d'email\nlet emailType = 'nouveau_signalement';\n\n// Quitus : email du MOEX avec PDF en pièce jointe\nif (\n  from.includes('connexionbatiment.fr') ||\n  (subject.match(/gpa\\s*n[°o]\\s*\\d+/i) && hasAttachment) ||\n  (bodyText.toLowerCase().includes('réserve levée') && hasAttachment) ||\n  (bodyText.toLowerCase().includes('reserve levee') && hasAttachment)\n) {\n  emailType = 'quitus';\n}\n\n// Ignorer nos propres emails de relance (loop prevention)\nif (subject.includes('[relance') || subject.includes('[urgent —')) {\n  emailType = 'ignorer';\n}\n\nreturn {\n  json: {\n    ...email,\n    email_type: emailType,\n    from_email: email.from,\n    subject_clean: email.subject,\n    body_text: bodyText.substring(0, 3000),\n    has_attachment: hasAttachment,\n    attachment_count: (email.attachments || []).length\n  }\n};"
+      }
+    },
+    {
+      "id": "wf1-node-0003",
+      "name": "Switch - Router par Type Email",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [650, 400],
+      "parameters": {
+        "mode": "rules",
+        "options": {},
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.email_type }}",
+                    "rightValue": "quitus",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Quitus MOEX"
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.email_type }}",
+                    "rightValue": "nouveau_signalement",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Nouveau Signalement"
+            }
+          ]
+        },
+        "fallbackOutput": "none"
+      }
+    },
+
+    {
+      "id": "wf1-node-quitus-llm",
+      "name": "Claude - Modèle Quitus",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [850, 150],
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "options": {
+          "maxTokensToSample": 256,
+          "temperature": 0
+        }
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_ANTHROPIC",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-quitus-agent",
+      "name": "Claude - Extraire N° Réserve",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.8,
+      "position": [1000, 200],
+      "parameters": {
+        "promptType": "define",
+        "text": "=Sujet du mail : {{ $json.subject_clean }}\n\nCorps du mail :\n{{ $json.body_text }}",
+        "options": {
+          "systemMessage": "Tu analyses des emails de retour de fiches GPA signées pour Fayat Immobilier.\nTa seule tâche : extraire le numéro de réserve GPA mentionné dans ce mail.\nLe numéro est souvent dans le sujet (ex: 'GPA n°83', 'réserve 83', 'n° 83') ou dans le corps.\nRéponds UNIQUEMENT avec le numéro entier (ex: 83). Si tu ne trouves pas de numéro, réponds 0.",
+          "maxIterations": 2,
+          "returnIntermediateSteps": false
+        }
+      }
+    },
+    {
+      "id": "wf1-node-quitus-excel-read",
+      "name": "Excel - Trouver Réserve par ID",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [1200, 200],
+      "parameters": {
+        "resource": "tableRow",
+        "operation": "getAll",
+        "workbookRLC": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE",
+          "mode": "id"
+        },
+        "worksheetRLC": {
+          "__rl": true,
+          "value": "Suivi GPA",
+          "mode": "name"
+        },
+        "tableRLC": {
+          "__rl": true,
+          "value": "TableauGPA",
+          "mode": "name"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-quitus-find",
+      "name": "Code - Trouver Ligne Réserve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 200],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const idReserve = parseInt($('Claude - Extraire N° Réserve').first().json.output || '0');\nconst allRows = $input.all();\n\nif (idReserve === 0) {\n  return [{ json: { found: false, id_reserve: 0, message: 'Numéro de réserve non trouvé dans email' } }];\n}\n\n// Trouver la ligne correspondante\nfor (let i = 0; i < allRows.length; i++) {\n  const row = allRows[i].json;\n  if (parseInt(row['N° de réserve']) === idReserve) {\n    return [{\n      json: {\n        found: true,\n        row_index: i,\n        id_reserve: idReserve,\n        statut: row['Statut'],\n        nom: row['Nom'],\n        lot: row['N° logement'],\n        piece: row['Localisation'],\n        date_reception: row['Date réception'],\n        already_closed: row['Statut'] === 'cloturee'\n      }\n    }];\n  }\n}\n\nreturn [{ json: { found: false, id_reserve: idReserve, message: 'Ligne non trouvée dans Excel' } }];"
+      }
+    },
+    {
+      "id": "wf1-node-quitus-if-found",
+      "name": "IF - Réserve Trouvée ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1600, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.found }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            },
+            {
+              "leftValue": "={{ $json.already_closed }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf1-node-quitus-gdrive",
+      "name": "Google Drive - Archiver PDF Quitus",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1800, 150],
+      "parameters": {
+        "operation": "upload",
+        "name": "=Quitus_GPA_n{{ $json.id_reserve }}_Lot{{ $json.lot }}_{{ $now.format('yyyy-MM-dd') }}.pdf",
+        "driveId": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_DOSSIER_GDRIVE_QUITUS",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_DOSSIER_GDRIVE_QUITUS",
+          "mode": "id"
+        },
+        "binaryData": true,
+        "binaryPropertyName": "pj_0",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_GOOGLE",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-quitus-excel-update",
+      "name": "Excel - Clôturer Réserve",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1800, 300],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/items/REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE/workbook/worksheets/Suivi%20GPA/tables/TableauGPA/rows/ItemAt(index={{ $('Code - Trouver Ligne Réserve').first().json.row_index }})",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftExcelOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"values\": [[\n    null, null, null, null, null, null, null, null, null, null, null,\n    \"{{ $now.format('dd/MM/yyyy') }}\",\n    \"Quitus reçu et archivé\",\n    \"{{ Math.floor((new Date() - new Date($('Code - Trouver Ligne Réserve').first().json.date_reception)) / (1000*60*60*24)) }}\",\n    null, null,\n    \"cloturee\",\n    null, null, null\n  ]]\n}",
+        "options": {}
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-quitus-notif",
+      "name": "Email - Notif Interne Quitus",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2000, 200],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "REMPLACER_PAR_EMAIL_RESPONSABLE_INTERNE",
+        "subject": "=[GPA CLOTURÉE] Réserve n°{{ $('Code - Trouver Ligne Réserve').first().json.id_reserve }} — Lot {{ $('Code - Trouver Ligne Réserve').first().json.lot }}",
+        "emailType": "text",
+        "message": "=Bonjour,\n\nLa réserve GPA n°{{ $('Code - Trouver Ligne Réserve').first().json.id_reserve }} (lot {{ $('Code - Trouver Ligne Réserve').first().json.lot }} — {{ $('Code - Trouver Ligne Réserve').first().json.piece }}) a été clôturée.\n\nLe quitus signé a été archivé dans Google Drive.\nDate de clôture : {{ $now.format('dd/MM/yyyy') }}\n\nService GPA Automatisé — Résidence ANTOINETTE",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+
+    {
+      "id": "wf1-node-triage-llm",
+      "name": "Claude - Modèle Triage",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [850, 550],
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "options": {
+          "maxTokensToSample": 1024,
+          "temperature": 0
+        }
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_ANTHROPIC",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-triage-agent",
+      "name": "Claude - Triage GPA",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.8,
+      "position": [1000, 600],
+      "parameters": {
+        "promptType": "define",
+        "text": "=De : {{ $json.from_email }}\nSujet : {{ $json.subject_clean }}\n\nCorps du mail :\n{{ $json.body_text }}",
+        "options": {
+          "systemMessage": "Tu es un assistant GPA pour Fayat Immobilier, Résidence ANTOINETTE.\nAnalyse le mail ci-dessous et réponds UNIQUEMENT avec un JSON valide, sans texte avant ni après.\n\nFORMAT OBLIGATOIRE :\n{\n  \"nom_client\": \"string\",\n  \"lot\": \"string (ex: C203, D205, PC)\",\n  \"batiment\": \"string (ex: B, C, D, E)\",\n  \"piece\": \"string (ex: Salle d'eau, Terrasse, Coursive)\",\n  \"description\": \"string (résumé concis du défaut signalé)\",\n  \"recevable\": boolean,\n  \"motif_non_recevable\": \"string ou null\",\n  \"urgence\": boolean,\n  \"entreprise\": \"ALU SUD|SOGECEB|ATB|ACRD|RIDORET|EUROGYPSE|AS CARRELAGE|INDETERMINE\"\n}\n\nRECEVABILITÉ (GPA couvre les défauts de construction, pas l'usure) :\n✅ Recevable : fuite, porte mal fermante, volet cassé, fissure, chauffage défaillant, paroi de douche à régler\n❌ Non recevable : égratignures après emménagement, usure parquet, entretien courant\n\nURGENCE = true uniquement si risque sécurité immédiat (chute, inondation active, risque électrique)\n\nAFFECTATION ENTREPRISES :\n- ALU SUD : volets roulants, aluminium, menuiseries extérieures, fenêtres, baies vitrées\n- SOGECEB : étanchéité, béton, dalle, coursives, caillebotis, balcons, terrasses\n- ATB : chauffage, VMC, plomberie, robinets, WC, douche, sanitaires, paroi de douche\n- ACRD : plâtrerie, cloisons, faux-plafonds, isolation\n- RIDORET : menuiseries intérieures, portes intérieures, parquet, placards\n- EUROGYPSE : peinture, placo, enduits\n- AS CARRELAGE : carrelage intérieur, faïence, joints de carrelage",
+          "maxIterations": 2,
+          "returnIntermediateSteps": false
+        }
+      }
+    },
+    {
+      "id": "wf1-node-parse-ai",
+      "name": "Code - Parser Réponse AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 600],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "let aiOutput = $input.item.json.output || '{}';\n\n// Nettoyer la réponse AI (enlever markdown si présent)\naiOutput = aiOutput.replace(/^```json\\s*/i, '').replace(/\\s*```$/, '').trim();\n\nlet aiData;\ntry {\n  aiData = JSON.parse(aiOutput);\n} catch(e) {\n  // Si parse échoue, retourner une valeur par défaut\n  aiData = {\n    nom_client: 'INCONNU',\n    lot: 'INCONNU',\n    batiment: 'INCONNU',\n    piece: 'INCONNU',\n    description: 'Analyse automatique échouée - traitement manuel requis',\n    recevable: false,\n    motif_non_recevable: 'Erreur analyse automatique',\n    urgence: false,\n    entreprise: 'INDETERMINE'\n  };\n}\n\nconst emailData = $('IMAP - Surveiller Boîte GPA').first().json;\n\nreturn {\n  json: {\n    ...aiData,\n    from_email: emailData.from,\n    original_subject: emailData.subject,\n    original_body: emailData.text || emailData.html || '',\n    has_attachment: emailData.attachments && emailData.attachments.length > 0\n  }\n};"
+      }
+    },
+    {
+      "id": "wf1-node-if-recevable",
+      "name": "IF - Réserve Recevable ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1400, 600],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.recevable }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf1-node-email-refus",
+      "name": "Email - Refus Client",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1600, 750],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "={{ $json.from_email }}",
+        "subject": "=Votre demande GPA — Lot {{ $json.lot }} — Résidence ANTOINETTE",
+        "emailType": "text",
+        "message": "=Bonjour {{ $json.nom_client }},\n\nNous avons bien reçu votre message concernant : {{ $json.description }}.\n\nAprès analyse, ce désordre ne relève pas de la Garantie de Parfait Achèvement ({{ $json.motif_non_recevable }}).\nIl n'est donc pas possible de donner suite à cette demande dans le cadre de la GPA.\n\nCordialement,\nFayat Immobilier — Service GPA Résidence ANTOINETTE",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-excel-rejete",
+      "name": "Excel - Enregistrer Rejet",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [1800, 750],
+      "parameters": {
+        "resource": "tableRow",
+        "operation": "add",
+        "workbookRLC": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE",
+          "mode": "id"
+        },
+        "worksheetRLC": {
+          "__rl": true,
+          "value": "Suivi GPA",
+          "mode": "name"
+        },
+        "tableRLC": {
+          "__rl": true,
+          "value": "TableauGPA",
+          "mode": "name"
+        },
+        "additionalFields": {
+          "values": [
+            { "column": "N° de réserve", "columnValue": "=AUTO-INCRÉMENT" },
+            { "column": "Date réception", "columnValue": "={{ $now.format('dd/MM/yyyy') }}" },
+            { "column": "Canal", "columnValue": "Email" },
+            { "column": "Nom", "columnValue": "={{ $json.nom_client }}" },
+            { "column": "N° logement", "columnValue": "={{ $json.lot }}" },
+            { "column": "Localisation", "columnValue": "={{ $json.piece }}" },
+            { "column": "Description", "columnValue": "={{ $json.description }}" },
+            { "column": "Réserve recevable", "columnValue": "Non" },
+            { "column": "Date réponse client", "columnValue": "={{ $now.format('dd/MM/yyyy') }}" },
+            { "column": "Commentaires", "columnValue": "={{ $json.motif_non_recevable }}" },
+            { "column": "Statut", "columnValue": "rejete" }
+          ]
+        }
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-excel-get-last-id",
+      "name": "Excel - Lire Dernier ID",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [1600, 500],
+      "parameters": {
+        "resource": "tableRow",
+        "operation": "getAll",
+        "workbookRLC": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE",
+          "mode": "id"
+        },
+        "worksheetRLC": {
+          "__rl": true,
+          "value": "Suivi GPA",
+          "mode": "name"
+        },
+        "tableRLC": {
+          "__rl": true,
+          "value": "TableauGPA",
+          "mode": "name"
+        },
+        "returnAll": true,
+        "options": {}
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-code-prepare",
+      "name": "Code - Préparer Données Fiche",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 500],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Calculer le prochain ID de réserve\nconst allRows = $input.all();\nlet maxId = 0;\nfor (const row of allRows) {\n  const id = parseInt(row.json['N° de réserve'] || '0');\n  if (id > maxId) maxId = id;\n}\nconst newId = maxId + 1;\n\n// Récupérer les données de l'analyse AI\nconst aiData = $('Code - Parser Réponse AI').first().json;\nconst emailData = $('IMAP - Surveiller Boîte GPA').first().json;\n\n// Calculer les dates\nconst today = new Date();\nconst isUrgence = aiData.urgence === true;\nconst daysToAdd = isUrgence ? 7 : 14;\nconst dateLimite = new Date(today);\ndateLimite.setDate(dateLimite.getDate() + daysToAdd);\n\nconst formatDate = (d) => d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });\n\nreturn [{\n  json: {\n    id_reserve: newId,\n    date_reception: formatDate(today),\n    date_limite: formatDate(dateLimite),\n    operation: 'ANTOINETTE',\n    nom_client: aiData.nom_client,\n    lot: aiData.lot,\n    batiment: aiData.batiment,\n    piece: aiData.piece,\n    description: aiData.description,\n    entreprise: aiData.entreprise,\n    urgence: isUrgence,\n    from_email: emailData.from,\n    original_subject: emailData.subject,\n    original_body: emailData.text || emailData.html || ''\n  }\n}];"
+      }
+    },
+    {
+      "id": "wf1-node-http-copy-doc",
+      "name": "HTTP - Copier Template Google Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 500],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://www.googleapis.com/drive/v3/files/REMPLACER_PAR_ID_TEMPLATE_GOOGLE_DOC/copy",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"Fiche GPA n°{{ $json.id_reserve }} - Lot {{ $json.lot }} - {{ $json.piece }}\",\n  \"parents\": [\"REMPLACER_PAR_ID_DOSSIER_GDRIVE_FICHES\"]\n}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_GOOGLE",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-http-replace",
+      "name": "HTTP - Remplacer Placeholders Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 500],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://docs.googleapis.com/v1/documents/{{ $json.id }}:batchUpdate",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"requests\": [\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{NUMERO_RESERVE}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.id_reserve }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{DATE_DEMANDE}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.date_reception }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{OPERATION}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.operation }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{NOM_OCCUPANT}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.nom_client }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{LOT}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.lot }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{BATIMENT}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.batiment }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{PIECE}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.piece }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{DESCRIPTION}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.description }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{DATE_LIMITE}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.date_limite }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{ENTREPRISE}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.entreprise }}\" } },\n    { \"replaceAllText\": { \"containsText\": {\"text\": \"{{EMAIL_OCCUPANT}}\", \"matchCase\": true}, \"replaceText\": \"{{ $('Code - Préparer Données Fiche').first().json.from_email }}\" } }\n  ]\n}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_GOOGLE",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-http-pdf",
+      "name": "HTTP - Exporter PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2400, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $('HTTP - Copier Template Google Doc').first().json.id }}/export?mimeType=application%2Fpdf",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "fiche_gpa_pdf"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_GOOGLE",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-email-accuse",
+      "name": "Email - Accusé Réception Client",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2600, 400],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "={{ $('Code - Préparer Données Fiche').first().json.from_email }}",
+        "subject": "=Réception de votre demande GPA — Lot {{ $('Code - Préparer Données Fiche').first().json.lot }} — Résidence ANTOINETTE",
+        "emailType": "text",
+        "message": "=Bonjour {{ $('Code - Préparer Données Fiche').first().json.nom_client }},\n\nNous accusons bonne réception de votre signalement concernant le logement {{ $('Code - Préparer Données Fiche').first().json.lot }} ({{ $('Code - Préparer Données Fiche').first().json.piece }}) :\n« {{ $('Code - Préparer Données Fiche').first().json.description }} »\n\nVotre dossier a été enregistré sous le numéro de réserve GPA n°{{ $('Code - Préparer Données Fiche').first().json.id_reserve }}.\nNous avons transmis votre demande à notre Maître d'Œuvre qui va prendre contact avec vous pour organiser l'intervention.\n\nCordialement,\nFayat Immobilier — Service GPA Résidence ANTOINETTE",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-email-moex",
+      "name": "Email - Transmission MOEX",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [2600, 600],
+      "parameters": {
+        "fromEmail": "REMPLACER_PAR_EMAIL_FAYAT",
+        "toEmail": "souys2.3@connexionbatiment.fr",
+        "subject": "=Réserve GPA n°{{ $('Code - Préparer Données Fiche').first().json.id_reserve }} — Résidence ANTOINETTE — Lot {{ $('Code - Préparer Données Fiche').first().json.lot }} — {{ $('Code - Préparer Données Fiche').first().json.piece }}",
+        "emailType": "text",
+        "message": "=Bonjour Clémence,\n\nVeuillez trouver ci-joint la fiche d'intervention GPA n°{{ $('Code - Préparer Données Fiche').first().json.id_reserve }} concernant le logement {{ $('Code - Préparer Données Fiche').first().json.lot }} ({{ $('Code - Préparer Données Fiche').first().json.piece }}).\n\nMerci de bien vouloir mandater l'entreprise compétente ({{ $('Code - Préparer Données Fiche').first().json.entreprise }}) et nous retourner la fiche complétée et signée avant le {{ $('Code - Préparer Données Fiche').first().json.date_limite }}.\n{{ $('Code - Préparer Données Fiche').first().json.urgence === true ? '\\n⚠️ URGENCE SÉCURITÉ — Intervention à planifier sous 48h.\\n' : '' }}\nCordialement,\nFayat Immobilier — Service GPA",
+        "attachments": "fiche_gpa_pdf",
+        "options": {}
+      },
+      "credentials": {
+        "smtp": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_SMTP",
+          "name": "SMTP Fayat Immobilier"
+        }
+      }
+    },
+    {
+      "id": "wf1-node-excel-append",
+      "name": "Excel - Enregistrer Nouvelle Réserve",
+      "type": "n8n-nodes-base.microsoftExcel",
+      "typeVersion": 2,
+      "position": [2800, 500],
+      "parameters": {
+        "resource": "tableRow",
+        "operation": "add",
+        "workbookRLC": {
+          "__rl": true,
+          "value": "REMPLACER_PAR_ID_FICHIER_EXCEL_ONEDRIVE",
+          "mode": "id"
+        },
+        "worksheetRLC": {
+          "__rl": true,
+          "value": "Suivi GPA",
+          "mode": "name"
+        },
+        "tableRLC": {
+          "__rl": true,
+          "value": "TableauGPA",
+          "mode": "name"
+        },
+        "additionalFields": {
+          "values": [
+            { "column": "N° de réserve", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.id_reserve }}" },
+            { "column": "Date réception", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.date_reception }}" },
+            { "column": "Canal", "columnValue": "Email" },
+            { "column": "Nom", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.nom_client }}" },
+            { "column": "N° logement", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.lot }}" },
+            { "column": "Localisation", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.piece }}" },
+            { "column": "Description", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.description }}" },
+            { "column": "Réserve recevable", "columnValue": "Oui" },
+            { "column": "Date réponse client", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.date_reception }}" },
+            { "column": "Date diffusion MOA au MOEX", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.date_reception }}" },
+            { "column": "Statut", "columnValue": "en_cours" },
+            { "column": "Urgence", "columnValue": "={{ $('Code - Préparer Données Fiche').first().json.urgence === true ? 'oui' : 'non' }}" }
+          ]
+        }
+      },
+      "credentials": {
+        "microsoftExcelOAuth2Api": {
+          "id": "REMPLACER_PAR_ID_CREDENTIALS_MICROSOFT",
+          "name": "Microsoft Excel OAuth2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "IMAP - Surveiller Boîte GPA": {
+      "main": [
+        [{ "node": "Code - Pré-classifier Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code - Pré-classifier Email": {
+      "main": [
+        [{ "node": "Switch - Router par Type Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Switch - Router par Type Email": {
+      "main": [
+        [{ "node": "Claude - Extraire N° Réserve", "type": "main", "index": 0 }],
+        [{ "node": "Claude - Triage GPA", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude - Modèle Quitus": {
+      "ai_languageModel": [
+        [{ "node": "Claude - Extraire N° Réserve", "type": "ai_languageModel", "index": 0 }]
+      ]
+    },
+    "Claude - Extraire N° Réserve": {
+      "main": [
+        [{ "node": "Excel - Trouver Réserve par ID", "type": "main", "index": 0 }]
+      ]
+    },
+    "Excel - Trouver Réserve par ID": {
+      "main": [
+        [{ "node": "Code - Trouver Ligne Réserve", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code - Trouver Ligne Réserve": {
+      "main": [
+        [{ "node": "IF - Réserve Trouvée ?", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF - Réserve Trouvée ?": {
+      "main": [
+        [
+          { "node": "Google Drive - Archiver PDF Quitus", "type": "main", "index": 0 },
+          { "node": "Excel - Clôturer Réserve", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    },
+    "Google Drive - Archiver PDF Quitus": {
+      "main": [
+        [{ "node": "Email - Notif Interne Quitus", "type": "main", "index": 0 }]
+      ]
+    },
+    "Claude - Modèle Triage": {
+      "ai_languageModel": [
+        [{ "node": "Claude - Triage GPA", "type": "ai_languageModel", "index": 0 }]
+      ]
+    },
+    "Claude - Triage GPA": {
+      "main": [
+        [{ "node": "Code - Parser Réponse AI", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code - Parser Réponse AI": {
+      "main": [
+        [{ "node": "IF - Réserve Recevable ?", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF - Réserve Recevable ?": {
+      "main": [
+        [{ "node": "Excel - Lire Dernier ID", "type": "main", "index": 0 }],
+        [
+          { "node": "Email - Refus Client", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Email - Refus Client": {
+      "main": [
+        [{ "node": "Excel - Enregistrer Rejet", "type": "main", "index": 0 }]
+      ]
+    },
+    "Excel - Lire Dernier ID": {
+      "main": [
+        [{ "node": "Code - Préparer Données Fiche", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code - Préparer Données Fiche": {
+      "main": [
+        [{ "node": "HTTP - Copier Template Google Doc", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP - Copier Template Google Doc": {
+      "main": [
+        [{ "node": "HTTP - Remplacer Placeholders Doc", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP - Remplacer Placeholders Doc": {
+      "main": [
+        [{ "node": "HTTP - Exporter PDF", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP - Exporter PDF": {
+      "main": [
+        [
+          { "node": "Email - Accusé Réception Client", "type": "main", "index": 0 },
+          { "node": "Email - Transmission MOEX", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Email - Transmission MOEX": {
+      "main": [
+        [{ "node": "Excel - Enregistrer Nouvelle Réserve", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "REMPLACER_PAR_ID_INSTANCE_N8N"
+  },
+  "tags": ["GPA", "Fayat Immobilier", "ANTOINETTE", "Email", "IA"]
+}
