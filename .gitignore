@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# Binaires téléchargés
+bin/
+
 # Dépendances
 node_modules/
 

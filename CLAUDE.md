@@ -26,8 +26,10 @@ Les serveurs MCP sont configurés dans `.claude/settings.json` (déjà présent 
 
 ### Prérequis
 
-- **Node.js** (pour n8n-mcp via npx) : `node --version` doit retourner v18+
-- **Docker** (pour GitHub MCP) : `docker --version` doit fonctionner
+- **Node.js v18+** (pour n8n-mcp via npx)
+- **GitHub MCP** : binaire Linux x86_64 dans `bin/github-mcp-server` (voir ci-dessous)
+
+> Le dossier `bin/` est dans `.gitignore`. À re-télécharger après chaque clone.
 
 ### 1. Configurer les variables d'environnement
 
@@ -36,21 +38,18 @@ cp .env.example .env
 # Éditez .env et remplissez N8N_API_KEY et GITHUB_TOKEN
 ```
 
-### 2. Tester n8n-mcp
+### 2. Télécharger le binaire GitHub MCP (si absent)
 
 ```bash
-N8N_API_URL=https://mapey.app.n8n.cloud N8N_API_KEY=<votre_clé> npx n8n-mcp
-# Doit démarrer sans erreur (Ctrl+C pour quitter)
+mkdir -p bin
+curl -L $(curl -s https://api.github.com/repos/github/github-mcp-server/releases/latest \
+  | grep "browser_download_url" | grep "Linux_x86_64" | cut -d'"' -f4) \
+  -o /tmp/github-mcp.tar.gz
+tar -xzf /tmp/github-mcp.tar.gz -C bin/ github-mcp-server
+chmod +x bin/github-mcp-server
 ```
 
-### 3. Tester le GitHub MCP
-
-```bash
-docker pull ghcr.io/github/github-mcp-server
-# Vérifier que l'image se télécharge correctement
-```
-
-### 4. Relancer Claude Code
+### 3. Relancer Claude Code
 
 Fermez et rouvrez Claude Code dans ce répertoire — les serveurs MCP démarreront automatiquement.
 
