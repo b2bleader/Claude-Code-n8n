@@ -4,9 +4,21 @@ Ce projet permet à Claude de créer, valider et gérer des workflows n8n de hau
 
 ## Environnement
 
-- **Instance n8n** : n8n Cloud
-- **Serveur MCP** : n8n-mcp (czlonkowski/n8n-mcp)
+- **Instance n8n** : [mapey.app.n8n.cloud](https://mapey.app.n8n.cloud/)
+- **Serveur MCP n8n** : [czlonkowski/n8n-mcp](https://github.com/czlonkowski/n8n-mcp)
+- **Serveur MCP GitHub** : [github/github-mcp-server](https://github.com/github/github-mcp-server)
 - **Skills** : voir section [Available Skills](#available-skills) ci-dessous
+
+### Configuration de l'accès n8n
+
+La clé API n8n doit être définie via variable d'environnement (ne jamais stocker dans ce fichier) :
+
+```bash
+export N8N_API_KEY="<votre_clé_api>"
+export N8N_BASE_URL="https://mapey.app.n8n.cloud"
+```
+
+> **Sécurité** : Ajoutez ces variables dans votre `.env` local (non versionné) ou dans les secrets de votre gestionnaire de configuration.
 
 ## Outils MCP Disponibles
 
@@ -47,7 +59,8 @@ Ce projet permet à Claude de créer, valider et gérer des workflows n8n de hau
 
 Les Skills suivantes s'activent automatiquement selon le contexte :
 
-<!-- TODO: Remplacer les liens ci-dessous par vos liens Skills personnels -->
+### n8n Skills — [czlonkowski/n8n-skills](https://github.com/czlonkowski/n8n-skills)
+
 1. **n8n Expression Syntax** — Patterns `{{}}` corrects et accès aux variables
 2. **n8n MCP Tools Expert** — Utilisation efficace des outils du serveur MCP
 3. **n8n Workflow Patterns** — 5 approches architecturales éprouvées
@@ -56,7 +69,9 @@ Les Skills suivantes s'activent automatiquement selon le contexte :
 6. **n8n Code JavaScript** — JavaScript dans les nœuds Code
 7. **n8n Code Python** — Python avec les limitations spécifiques n8n
 
-> **Action requise** : remplacez cette liste par vos liens Skills (GitHub, npm ou URL directe).
+### Frontend Design Skill — [anthropics/claude-code](https://github.com/anthropics/claude-code/blob/main/plugins/frontend-design/skills/frontend-design/SKILL.md)
+
+8. **Frontend Designer** — Conception UI/UX, composants React, CSS, accessibilité et meilleures pratiques design
 
 ## Processus de Construction de Workflows
 

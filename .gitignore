@@ -1,0 +1,14 @@
+# Variables d'environnement et secrets — NE JAMAIS versionner
+.env
+.env.*
+!.env.example
+
+# Dépendances
+node_modules/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
